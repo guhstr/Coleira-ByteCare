@@ -1,0 +1,887 @@
+[
+    {
+        "id": "b2d257ff0cc80c0a",
+        "type": "tab",
+        "label": "Coleira Inteligente Pet",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "d8f02f35cfd8a050",
+        "type": "inject",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Auto 5min",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "300",
+        "once": true,
+        "onceDelay": "2",
+        "payload": "",
+        "payloadType": "date",
+        "x": 110,
+        "y": 80,
+        "wires": [
+            [
+                "ea5cfbf1a05e31fd"
+            ]
+        ]
+    },
+    {
+        "id": "75a9250eb8f2f714",
+        "type": "ui_button",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Botao Atualizar",
+        "group": "f3373f26d379401e",
+        "order": 4,
+        "width": "3",
+        "height": "1",
+        "passthru": false,
+        "label": "Atualizar agora",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "icon": "refresh",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "",
+        "topicType": "str",
+        "x": 110,
+        "y": 130,
+        "wires": [
+            [
+                "ea5cfbf1a05e31fd"
+            ]
+        ]
+    },
+    {
+        "id": "ea5cfbf1a05e31fd",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Query buscar pets",
+        "func": "msg.topic = \"SELECT id, nome, especie, tutor, DATE_FORMAT(proxima_consulta, '%d/%m/%Y') AS data_fmt, DATEDIFF(proxima_consulta, CURDATE()) AS dias_restantes FROM pets ORDER BY proxima_consulta\";\nreturn msg;",
+        "outputs": 1,
+        "x": 340,
+        "y": 100,
+        "wires": [
+            [
+                "f7bef2a0636a840b"
+            ]
+        ]
+    },
+    {
+        "id": "f7bef2a0636a840b",
+        "type": "mysql",
+        "z": "b2d257ff0cc80c0a",
+        "mydb": "mysql_pets",
+        "name": "Buscar pets",
+        "x": 550,
+        "y": 100,
+        "wires": [
+            [
+                "9d0b6275ed210916"
+            ]
+        ]
+    },
+    {
+        "id": "9d0b6275ed210916",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Processar pets",
+        "func": "var pets = msg.payload;\nif (!pets || pets.length === 0) {\n  flow.set('estado_leds', {});\n  flow.set('nomes_ativos', []);\n  return [{payload: '0', topic: 'coleira/dias'},{payload: []},{payload: 0},{payload: 'Nenhum animal cadastrado'},null,null];\n}\n\nvar resumo = [];\nvar contagem = {roxo:0, verde:0, amarelo:0, vermelho:0};\nvar estadoAnterior = flow.get('estado_leds') || {};\nvar nomesAtivos = [];\nvar logMsgs = [];\n\nfor (var i = 0; i < pets.length; i++) {\n  var p = pets[i];\n  var dias = parseInt(p.dias_restantes);\n  var led = '';\n  if (dias <= 1) led = 'roxo';\n  else if (dias <= 5) led = 'verde';\n  else if (dias <= 15) led = 'amarelo';\n  else led = 'vermelho';\n  contagem[led]++;\n  nomesAtivos.push(p.nome);\n  resumo.push({nome: p.nome, especie: p.especie, tutor: p.tutor, dias: dias < 0 ? 'ATRASADO' : String(dias) + ' dias', led: led, data: p.data_fmt});\n  if (estadoAnterior[p.nome] !== led) {\n    logMsgs.push({topic: \"INSERT INTO log_alertas (pet_id, pet_nome, dias_restantes, status_led) SELECT id, '\" + p.nome + \"', \" + (dias < 0 ? 0 : dias) + \", '\" + led + \"' FROM pets WHERE nome='\" + p.nome + \"' LIMIT 1\"});\n    estadoAnterior[p.nome] = led;\n  }\n}\n\n// Remove do estado pets que foram deletados do banco\nvar estadoLimpo = {};\nfor (var j = 0; j < nomesAtivos.length; j++) {\n  estadoLimpo[nomesAtivos[j]] = estadoAnterior[nomesAtivos[j]];\n}\nflow.set('estado_leds', estadoLimpo);\nflow.set('nomes_ativos', nomesAtivos);\n\nvar diasNum = parseInt(pets[0].dias_restantes);\nvar critico = resumo.find(function(p){ return p.led === 'roxo'; });\nvar txtContagem = '✅ Longe: ' + contagem.vermelho + '  |  ⏰ 15 dias: ' + contagem.amarelo + '  |  ⚠️ 5 dias: ' + contagem.verde + '  |  🚨 URGENTE: ' + contagem.roxo;\nvar alertaMsg = null;\nif (critico) alertaMsg = {payload: '⚨️ URGENTE: ' + critico.nome + ' - consulta em 1 dia!'};\nreturn [{payload: String(diasNum < 0 ? 0 : diasNum), topic: 'coleira/dias'},{payload: resumo},{payload: diasNum < 0 ? 0 : diasNum},{payload: txtContagem},alertaMsg,logMsgs.length > 0 ? logMsgs : null];",
+        "outputs": 6,
+        "x": 760,
+        "y": 100,
+        "wires": [
+            [
+                "63572d87442a7038"
+            ],
+            [
+                "1e37e2f65bac229d"
+            ],
+            [
+                "80f6f02254b10541"
+            ],
+            [
+                "1636604a40cace90"
+            ],
+            [
+                "ee013a57fc9a78bb"
+            ],
+            [
+                "6dbf9674b926fbc7"
+            ]
+        ]
+    },
+    {
+        "id": "63572d87442a7038",
+        "type": "mqtt out",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Pub coleira/dias",
+        "topic": "coleira/dias",
+        "qos": "0",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqtt_broker_hive",
+        "x": 1000,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "1e37e2f65bac229d",
+        "type": "ui_table",
+        "z": "b2d257ff0cc80c0a",
+        "group": "fad39367e3ea8392",
+        "name": "Tabela animais",
+        "order": 1,
+        "width": "12",
+        "height": "8",
+        "columns": [
+            {
+                "field": "nome",
+                "title": "Animal",
+                "width": "150",
+                "align": "left",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "especie",
+                "title": "Especie",
+                "width": "120",
+                "align": "left",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "tutor",
+                "title": "Tutor",
+                "width": "150",
+                "align": "left",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "dias",
+                "title": "Dias restantes",
+                "width": "130",
+                "align": "center",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "led",
+                "title": "Status",
+                "width": "110",
+                "align": "center",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "data",
+                "title": "Proxima consulta",
+                "width": "150",
+                "align": "center",
+                "formatter": "plaintext"
+            }
+        ],
+        "outputs": 0,
+        "x": 1010,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "80f6f02254b10541",
+        "type": "ui_gauge",
+        "z": "b2d257ff0cc80c0a",
+        "group": "f3373f26d379401e",
+        "order": 1,
+        "width": "4",
+        "height": "4",
+        "gtype": "gage",
+        "title": "Dias ate proxima consulta",
+        "label": "dias",
+        "format": "{{value}}",
+        "min": "0",
+        "max": "30",
+        "colors": [
+            "#8B5CF6",
+            "#EAB308",
+            "#22C55E"
+        ],
+        "seg1": "2",
+        "seg2": "6",
+        "x": 1000,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "1636604a40cace90",
+        "type": "ui_text",
+        "z": "b2d257ff0cc80c0a",
+        "group": "f3373f26d379401e",
+        "order": 2,
+        "width": "12",
+        "height": "1",
+        "name": "Contagem por status",
+        "label": "Resumo: ",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "x": 1010,
+        "y": 210,
+        "wires": []
+    },
+    {
+        "id": "ee013a57fc9a78bb",
+        "type": "ui_toast",
+        "z": "b2d257ff0cc80c0a",
+        "position": "top right",
+        "displayTime": "8",
+        "highlight": "",
+        "sendall": true,
+        "outputs": 0,
+        "ok": "OK",
+        "name": "Alerta urgente",
+        "x": 1010,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "6dbf9674b926fbc7",
+        "type": "mysql",
+        "z": "b2d257ff0cc80c0a",
+        "mydb": "mysql_pets",
+        "name": "Salvar log mudancas",
+        "x": 1010,
+        "y": 310,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "e1eebcdb4d498167",
+        "type": "mqtt in",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Receber coleira/status",
+        "topic": "coleira/status",
+        "qos": "0",
+        "datatype": "utf8",
+        "broker": "mqtt_broker_hive",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 130,
+        "y": 420,
+        "wires": [
+            [
+                "4740520852a93754"
+            ]
+        ]
+    },
+    {
+        "id": "4740520852a93754",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Formatar status",
+        "func": "var raw = msg.payload || '';\nvar icone = '';\nif (raw.indexOf('URGENTE') >= 0) icone = '🚨 ';\nelse if (raw.indexOf('breve') >= 0) icone = '⚠️ ';\nelse if (raw.indexOf('15') >= 0) icone = '⏰ ';\nelse icone = '✅ ';\nmsg.payload = icone + raw;\nreturn msg;",
+        "outputs": 1,
+        "x": 370,
+        "y": 420,
+        "wires": [
+            [
+                "b82da1431aca314f",
+                "89166a97d7f284de"
+            ]
+        ]
+    },
+    {
+        "id": "b82da1431aca314f",
+        "type": "ui_text",
+        "z": "b2d257ff0cc80c0a",
+        "group": "f3373f26d379401e",
+        "order": 3,
+        "width": "12",
+        "height": "1",
+        "name": "Status coleira ESP32",
+        "label": "Coleira: ",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "x": 610,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "89166a97d7f284de",
+        "type": "debug",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Debug status",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": true,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 610,
+        "y": 450,
+        "wires": []
+    },
+    {
+        "id": "f77d665a4a0f8be2",
+        "type": "ui_form",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Cadastrar Pet",
+        "label": "Preencha os dados do animal",
+        "group": "group_cadastro",
+        "order": 1,
+        "width": "12",
+        "height": "0",
+        "options": [
+            {
+                "label": "Nome do animal",
+                "value": "nome",
+                "type": "text",
+                "required": true
+            },
+            {
+                "label": "Especie (Cachorro, Gato...)",
+                "value": "especie",
+                "type": "text",
+                "required": true
+            },
+            {
+                "label": "Nome do tutor",
+                "value": "tutor",
+                "type": "text",
+                "required": true
+            },
+            {
+                "label": "Data da proxima consulta (DD/MM/AAAA)",
+                "value": "proxima_consulta",
+                "type": "text",
+                "required": true
+            }
+        ],
+        "formValue": {
+            "nome": "",
+            "especie": "",
+            "tutor": "",
+            "proxima_consulta": ""
+        },
+        "payload": "",
+        "submit": "Cadastrar animal",
+        "cancel": "Limpar",
+        "topic": "",
+        "x": 130,
+        "y": 560,
+        "wires": [
+            [
+                "b17d6342896093e8"
+            ]
+        ]
+    },
+    {
+        "id": "b17d6342896093e8",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Converter data e INSERT",
+        "func": "var d = msg.payload;\nvar nome = (d.nome || '').replace(/'/g,'');\nvar especie = (d.especie || '').replace(/'/g,'');\nvar tutor = (d.tutor || '').replace(/'/g,'');\nvar dataRaw = (d.proxima_consulta || '').trim();\nvar dataSQL = '';\nif (dataRaw.indexOf('/') >= 0) {\n  var partes = dataRaw.split('/');\n  if (partes.length === 3) dataSQL = partes[2] + '-' + partes[1] + '-' + partes[0];\n} else { dataSQL = dataRaw; }\nif (!nome || !especie || !tutor || !dataSQL) { node.warn('Campos obrigatorios'); return null; }\nmsg.topic = \"INSERT INTO pets (nome, especie, tutor, proxima_consulta) VALUES ('\" + nome + \"', '\" + especie + \"', '\" + tutor + \"', '\" + dataSQL + \"')\";\nreturn msg;",
+        "outputs": 1,
+        "x": 390,
+        "y": 560,
+        "wires": [
+            [
+                "37a63dfa7a99b5fc"
+            ]
+        ]
+    },
+    {
+        "id": "37a63dfa7a99b5fc",
+        "type": "mysql",
+        "z": "b2d257ff0cc80c0a",
+        "mydb": "mysql_pets",
+        "name": "Inserir pet",
+        "x": 610,
+        "y": 560,
+        "wires": [
+            [
+                "99abf0a2acf49509"
+            ]
+        ]
+    },
+    {
+        "id": "99abf0a2acf49509",
+        "type": "ui_toast",
+        "z": "b2d257ff0cc80c0a",
+        "position": "top right",
+        "displayTime": "3",
+        "highlight": "",
+        "sendall": true,
+        "outputs": 0,
+        "ok": "OK",
+        "name": "Toast cadastro",
+        "x": 820,
+        "y": 560,
+        "wires": []
+    },
+    {
+        "id": "7f22bca5cea19d57",
+        "type": "ui_form",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Deletar Pet",
+        "label": "Digite o nome exato do animal para remover",
+        "group": "092f4a52c44c8e6e",
+        "order": 1,
+        "width": "9",
+        "height": "1",
+        "options": [
+            {
+                "label": "Nome do animal",
+                "value": "nome",
+                "type": "text",
+                "required": true,
+                "rows": null
+            }
+        ],
+        "formValue": {
+            "nome": ""
+        },
+        "payload": "",
+        "submit": "Remover animal",
+        "cancel": "Limpar",
+        "topic": "",
+        "topicType": "str",
+        "splitLayout": false,
+        "className": "",
+        "x": 130,
+        "y": 660,
+        "wires": [
+            [
+                "a2161721935e9dc4"
+            ]
+        ]
+    },
+    {
+        "id": "a2161721935e9dc4",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Montar DELETE",
+        "func": "var nome = (msg.payload.nome || '').replace(/'/g,'').trim();\nif (!nome) { node.warn('Nome vazio'); return null; }\n\n// Remove da memoria de estado tambem\nvar estado = flow.get('estado_leds') || {};\ndelete estado[nome];\nflow.set('estado_leds', estado);\n\nmsg.topic = \"DELETE FROM pets WHERE nome='\" + nome + \"'\";\nreturn msg;",
+        "outputs": 1,
+        "x": 370,
+        "y": 660,
+        "wires": [
+            [
+                "03f2492242d296bd"
+            ]
+        ]
+    },
+    {
+        "id": "03f2492242d296bd",
+        "type": "mysql",
+        "z": "b2d257ff0cc80c0a",
+        "mydb": "mysql_pets",
+        "name": "Deletar pet",
+        "x": 590,
+        "y": 660,
+        "wires": [
+            [
+                "ca41a8cf5298a7b8"
+            ]
+        ]
+    },
+    {
+        "id": "ca41a8cf5298a7b8",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Pos deletar",
+        "func": "msg.payload = 'Animal removido com sucesso!';\nreturn msg;",
+        "outputs": 1,
+        "x": 790,
+        "y": 660,
+        "wires": [
+            [
+                "34893832e6ee8da4",
+                "ea5cfbf1a05e31fd"
+            ]
+        ]
+    },
+    {
+        "id": "34893832e6ee8da4",
+        "type": "ui_toast",
+        "z": "b2d257ff0cc80c0a",
+        "position": "top right",
+        "displayTime": "3",
+        "highlight": "",
+        "sendall": true,
+        "outputs": 0,
+        "ok": "OK",
+        "name": "Toast deletar",
+        "x": 1000,
+        "y": 640,
+        "wires": []
+    },
+    {
+        "id": "ui_form_historico",
+        "type": "ui_form",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Form Historico",
+        "label": "Registrar consulta realizada",
+        "group": "group_historico",
+        "order": 1,
+        "width": "12",
+        "height": "0",
+        "options": [
+            {
+                "label": "Nome do animal",
+                "value": "nome",
+                "type": "text",
+                "required": true
+            },
+            {
+                "label": "Data da consulta realizada (DD/MM/AAAA)",
+                "value": "data_consulta",
+                "type": "text",
+                "required": true
+            },
+            {
+                "label": "Observacoes (ex: Vacinacao, Check-up, Vermifugacao...)",
+                "value": "observacoes",
+                "type": "text",
+                "required": false
+            },
+            {
+                "label": "Proxima consulta (DD/MM/AAAA)",
+                "value": "proxima_consulta",
+                "type": "text",
+                "required": true
+            }
+        ],
+        "formValue": {
+            "nome": "",
+            "data_consulta": "",
+            "observacoes": "",
+            "proxima_consulta": ""
+        },
+        "payload": "",
+        "submit": "Registrar consulta",
+        "cancel": "Limpar",
+        "topic": "",
+        "x": 120,
+        "y": 720,
+        "wires": [
+            [
+                "fn_registrar_historico"
+            ]
+        ]
+    },
+    {
+        "id": "fn_registrar_historico",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Montar INSERT historico",
+        "func": "var d = msg.payload;\nvar nome = (d.nome || '').replace(/'/g,'').trim();\nvar obs = (d.observacoes || '').replace(/'/g,'').trim();\nvar dataConsRaw = (d.data_consulta || '').trim();\nvar dataProxRaw = (d.proxima_consulta || '').trim();\n\nfunction converterData(raw) {\n  if (raw.indexOf('/') >= 0) {\n    var p = raw.split('/');\n    if (p.length === 3) return p[2] + '-' + p[1] + '-' + p[0];\n  }\n  return raw;\n}\n\nvar dataConsSQL = converterData(dataConsRaw);\nvar dataProxSQL = converterData(dataProxRaw);\n\nif (!nome || !dataConsSQL || !dataProxSQL) {\n  node.warn('Campos obrigatorios nao preenchidos');\n  return null;\n}\n\nflow.set('historico_nome', nome);\nflow.set('historico_prox', dataProxSQL);\n\nmsg.topic = \"INSERT INTO historico_consultas (pet_id, data_consulta, observacoes) SELECT id, '\" + dataConsSQL + \"', '\" + obs + \"' FROM pets WHERE nome='\" + nome + \"' LIMIT 1\";\nreturn msg;",
+        "outputs": 1,
+        "x": 380,
+        "y": 720,
+        "wires": [
+            [
+                "mysql_historico_insert"
+            ]
+        ]
+    },
+    {
+        "id": "mysql_historico_insert",
+        "type": "mysql",
+        "z": "b2d257ff0cc80c0a",
+        "mydb": "mysql_pets",
+        "name": "Inserir historico",
+        "x": 620,
+        "y": 720,
+        "wires": [
+            [
+                "fn_atualizar_proxima"
+            ]
+        ]
+    },
+    {
+        "id": "fn_atualizar_proxima",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Atualizar proxima consulta",
+        "func": "var nome = flow.get('historico_nome');\nvar dataProx = flow.get('historico_prox');\nif (!nome || !dataProx) return null;\nmsg.topic = \"UPDATE pets SET proxima_consulta='\" + dataProx + \"' WHERE nome='\" + nome + \"'\";\nreturn msg;",
+        "outputs": 1,
+        "x": 860,
+        "y": 720,
+        "wires": [
+            [
+                "mysql_update_prox"
+            ]
+        ]
+    },
+    {
+        "id": "mysql_update_prox",
+        "type": "mysql",
+        "z": "b2d257ff0cc80c0a",
+        "mydb": "mysql_pets",
+        "name": "Atualizar pets",
+        "x": 1090,
+        "y": 720,
+        "wires": [
+            [
+                "fn_pos_historico"
+            ]
+        ]
+    },
+    {
+        "id": "fn_pos_historico",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Pos historico",
+        "func": "msg.payload = 'Consulta registrada e proxima data atualizada!';\nreturn msg;",
+        "outputs": 1,
+        "x": 1090,
+        "y": 780,
+        "wires": [
+            [
+                "ui_toast_historico",
+                "inj_buscar_historico"
+            ]
+        ]
+    },
+    {
+        "id": "ui_toast_historico",
+        "type": "ui_toast",
+        "z": "b2d257ff0cc80c0a",
+        "position": "top right",
+        "displayTime": "4",
+        "highlight": "",
+        "sendall": true,
+        "outputs": 0,
+        "ok": "OK",
+        "name": "Toast historico",
+        "x": 1090,
+        "y": 840,
+        "wires": []
+    },
+    {
+        "id": "inj_buscar_historico",
+        "type": "inject",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Buscar historico",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "once": true,
+        "onceDelay": "3",
+        "payload": "",
+        "payloadType": "date",
+        "x": 120,
+        "y": 820,
+        "wires": [
+            [
+                "query_historico"
+            ]
+        ]
+    },
+    {
+        "id": "query_historico",
+        "type": "function",
+        "z": "b2d257ff0cc80c0a",
+        "name": "Query historico",
+        "func": "msg.topic = \"SELECT p.nome, p.especie, DATE_FORMAT(h.data_consulta, '%d/%m/%Y') AS data_consulta, h.observacoes, DATE_FORMAT(h.registrado_em, '%d/%m/%Y %H:%i') AS registrado_em FROM historico_consultas h INNER JOIN pets p ON p.id = h.pet_id ORDER BY h.data_consulta DESC LIMIT 50\";\nreturn msg;",
+        "outputs": 1,
+        "x": 330,
+        "y": 820,
+        "wires": [
+            [
+                "mysql_historico_select"
+            ]
+        ]
+    },
+    {
+        "id": "mysql_historico_select",
+        "type": "mysql",
+        "z": "b2d257ff0cc80c0a",
+        "mydb": "mysql_pets",
+        "name": "Buscar historico",
+        "x": 550,
+        "y": 820,
+        "wires": [
+            [
+                "ui_tabela_historico"
+            ]
+        ]
+    },
+    {
+        "id": "ui_tabela_historico",
+        "type": "ui_table",
+        "z": "b2d257ff0cc80c0a",
+        "group": "group_historico_tabela",
+        "name": "Tabela historico",
+        "order": 1,
+        "width": "12",
+        "height": "8",
+        "columns": [
+            {
+                "field": "nome",
+                "title": "Animal",
+                "width": "150",
+                "align": "left",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "especie",
+                "title": "Especie",
+                "width": "120",
+                "align": "left",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "data_consulta",
+                "title": "Data da consulta",
+                "width": "150",
+                "align": "center",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "observacoes",
+                "title": "Observacoes",
+                "width": "250",
+                "align": "left",
+                "formatter": "plaintext"
+            },
+            {
+                "field": "registrado_em",
+                "title": "Registrado em",
+                "width": "160",
+                "align": "center",
+                "formatter": "plaintext"
+            }
+        ],
+        "outputs": 0,
+        "x": 780,
+        "y": 820,
+        "wires": []
+    },
+    {
+        "id": "f3373f26d379401e",
+        "type": "ui_group",
+        "name": "Status Geral",
+        "tab": "ui_tab_coleira",
+        "order": 2,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "mysql_pets",
+        "type": "MySQLdatabase",
+        "name": "Clever Cloud MySQL",
+        "host": "bldrziw50siiiqco0n7d-mysql.services.clever-cloud.com",
+        "port": "3306",
+        "db": "bldrziw50siiiqco0n7d",
+        "tz": "America/Sao_Paulo",
+        "charset": ""
+    },
+    {
+        "id": "mqtt_broker_hive",
+        "type": "mqtt-broker",
+        "name": "HiveMQ Cloud",
+        "broker": "3f3a91da234e4351bfbad9f9e86a145c.s1.eu.hivemq.cloud",
+        "port": "8883",
+        "tls": "",
+        "clientid": "nodered_coleira",
+        "autoConnect": true,
+        "usetls": true,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "fad39367e3ea8392",
+        "type": "ui_group",
+        "name": "Animais Cadastrados",
+        "tab": "ui_tab_coleira",
+        "order": 4,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "group_cadastro",
+        "type": "ui_group",
+        "name": "Cadastrar Animal",
+        "tab": "ui_tab_coleira",
+        "order": 1,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "092f4a52c44c8e6e",
+        "type": "ui_group",
+        "name": "Remover Animal",
+        "tab": "ui_tab_coleira",
+        "order": 5,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "group_historico",
+        "type": "ui_group",
+        "name": "Registrar Consulta Realizada",
+        "tab": "ui_tab_coleira",
+        "order": 3,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "group_historico_tabela",
+        "type": "ui_group",
+        "name": "Historico de Consultas",
+        "tab": "ui_tab_coleira",
+        "order": 6,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "ui_tab_coleira",
+        "type": "ui_tab",
+        "name": "Coleira Inteligente",
+        "icon": "pets",
+        "order": 1,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "b1d3e8844b67787f",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-dashboard": "3.6.6",
+            "node-red-node-mysql": "3.0.0",
+            "node-red-node-ui-table": "0.4.5"
+        }
+    }
+]
